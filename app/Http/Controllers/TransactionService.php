@@ -91,6 +91,14 @@ class TransactionService
                 'amount' => DB::raw('amount + ' . $amount),
                 'rate' => $newRate
             ]);
+
+            // Check for link deletion
+            if ($existingLink->amount <= 0) {
+                DB::table('links')->where([
+                    ['sender_id', '=', $senderId],
+                    ['receiver_id', '=', $receiverId]
+                ])->delete();
+            }
         } else {
             // Insert new link
             DB::table('links')->insert([
@@ -180,8 +188,18 @@ class TransactionService
             $account->auxiliary -= $share;
             $account->save();
 
-            // Update links
-            $this->updateLink($participant->id, $account->id, -$share, 0); // rate 0 is a special case
+            // Check and delete link if amount is zero or negative 
+            $existingLink = DB::table('links')
+            ->where('sender_id', $participant->id)
+            ->where('receiver_id', $account->id)
+            ->first();
+
+            if ($existingLink && $existingLink->amount <= 0) {
+                DB::table('links')
+                ->where('sender_id', $participant->id)
+                ->where('receiver_id', $account->id)
+                ->delete();
+            }
         }
 
         // Update participant's public rate
