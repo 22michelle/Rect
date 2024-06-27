@@ -11,11 +11,11 @@ use Illuminate\Support\Facades\Log;
 class TransactionController extends Controller
 {
 
-    private \App\Services\TransactionService $transactionService;
+    private TransactionService $transactionService;
 
     public function __construct()
     {
-        $this->transactionService = new \App\Services\TransactionService();
+        $this->transactionService = new TransactionService();
     }
 
     public function all(): JsonResponse

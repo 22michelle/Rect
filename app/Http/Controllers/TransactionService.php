@@ -12,9 +12,6 @@ class TransactionService
     public function createTransaction($senderId, $receiverId, $amount, $feeRate)
     {
         return DB::transaction(function () use ($senderId, $receiverId, $amount, $feeRate) {
-
-            $this->clearPendingDistributions($receiverId);
-
             $sender = Account::findOrFail($senderId);
             $receiver = Account::findOrFail($receiverId);
 
@@ -26,37 +23,36 @@ class TransactionService
                 'is_distributed' => false
             ]);
 
+            // Update links before updating sender and receiver
+            $this->updateLink($senderId, $receiverId, $amount, $feeRate);
+
             // Calculate fee
             $fee = $amount * ($feeRate / 100);
 
             // Update sender's balance and obligations
             $sender->balance -= ($amount + $fee);
-            $sender->link_obligation += $amount;
             $sender->save();
             $sender->public_rate = $this->calculateNewPR($sender->refresh());
-            $sender->value = $sender->balance + $sender->auxiliary - $sender->link_income + $sender->link_obligation;
+            $sender->value = $this->calculateValue($sender);
             $sender->save();
 
             // Update receiver's balance, auxiliary, and link income
             $receiver->balance += $amount;
             $receiver->auxiliary += $fee;
-            $receiver->link_income += $amount;
-            $receiver->value = $receiver->balance + $receiver->auxiliary - $receiver->link_income + $receiver->link_obligation;
+            $receiver->trxCount += 1; // Increment receiver's trxCount
+            $receiver->value = $this->calculateValue($receiver);
             $receiver->save();
 
-            // Check if receiver needs to distribute
-            $this->triggerDistributions($receiver->refresh(), $sender->refresh());
-            // Ensure all distributions are cleared before creating a new transaction
+            $this->clearPendingDistributions();
+
             return $transaction;
         });
     }
 
     private function calculateNewPR($user): float|int
     {
-        $totalAmount = $user->sentTransactions->sum('amount');
-        $sumProd = $user->sentTransactions->sum(function ($transaction) {
-            return $transaction->amount * $transaction->fee_rate;
-        });
+        $totalAmount = DB::table('links')->where('sender_id', $user->id)->sum('amount');
+        $sumProd = DB::table('links')->where('sender_id', $user->id)->sum(DB::raw('amount * rate'));
 
         Log::info($totalAmount . ' Total sum of Lo');
         Log::info('Amount * Fee ' . $sumProd);
@@ -69,107 +65,127 @@ class TransactionService
         }
     }
 
-    private function triggerDistributions($user, $sender): void
+    private function calculateValue($user)
     {
-        $distributionsToTrigger = [$user];
+        $linkObligation = DB::table('links')->where('sender_id', $user->id)->sum('amount');
+        $linkIncome = DB::table('links')->where('receiver_id', $user->id)->sum('amount');
+        return $user->balance + $user->auxiliary - $linkIncome + $linkObligation;
+    }
 
-        while (!empty($distributionsToTrigger)) {
-            $currentUser = array_pop($distributionsToTrigger);
+    private function updateLink($senderId, $receiverId, $amount, $feeRate)
+    {
+        $existingLink = DB::table('links')->where([
+            ['sender_id', '=', $senderId],
+            ['receiver_id', '=', $receiverId]
+        ])->first();
 
-            if ($currentUser->auxiliary > 0 && $currentUser->balance >= $currentUser->value) {
-                Log::info($currentUser->name . ' is distributing');
-                $totalPR = DB::table('transactions')
-                    ->join('accounts', 'transactions.sender_id', '=', 'accounts.id')
-                    ->where('transactions.receiver_id', $currentUser->id)
-                    ->select('transactions.sender_id', DB::raw('SUM(accounts.public_rate) as total_public_rate'))
-                    ->groupBy('transactions.sender_id')
-                    ->get()
-                    ->sum('total_public_rate');
+        if ($existingLink) {
+            // Update link rate
+            $newRate = (($existingLink->amount * $existingLink->rate) + ($amount * $feeRate)) / ($existingLink->amount + $amount);
 
-                // Taking transactions with fee rate > 0 and distribution status false
-               /* $trxCount = Transactions::where('receiver_id', $currentUser->id)
-                    ->where('fee_rate', '>', 0)
-                    ->where('is_distributed', false)
-                    ->whereColumn('sender_id', '!=', 'receiver_id')
-                    ->count();*/
-
-
-                $trxCount = $sender->trxCount + 1;
-                Log::info($currentUser->trigger . '+1 ==' . $trxCount);
-
-                if ($totalPR > 0 && ($trxCount == $currentUser->trigger + 1)) {
-                    $currentUser->trigger *= 2;
-                    $distributionAmount = $currentUser->auxiliary;
-                    $currentUser->link_income -= $distributionAmount;
-                    $senders = Transactions::where('receiver_id', $currentUser->id)
-                        ->select('sender_id')
-                        ->distinct()
-                        ->get();
-
-                    $senders->each(function ($sender) use ($currentUser, $distributionAmount, $totalPR, &$distributionsToTrigger) {
-                        $participant = Account::find($sender->sender_id);
-                        if ($participant) {
-                            Log::info('Distributing to ' . $participant->name);
-                            $remainingLo = $participant->link_obligation;
-                            $share = min($distributionAmount * ($participant->public_rate / $totalPR), $remainingLo);
-                            Log::info('His/Her share ' . $share);
-                            $participant->auxiliary += $share;
-                            $participant->link_obligation -= $share;
-                            $participant->trxCount += 1;
-                            $participant->save();
-
-                            $transaction = Transactions::where('sender_id', $participant->id)
-                                ->where('receiver_id', $currentUser->id)
-                                ->where('is_distributed', false)
-                                ->orderBy('created_at', 'desc')
-                                ->first();
-
-                            if ($transaction) {
-                                $transaction->amount -= $share;
-                                $transaction->is_distributed = $transaction->amount > 0;
-                                $transaction->save();
-                            }
-
-                            $participant->refresh();
-                            if ($participant->auxiliary > 0 && $participant->balance < $participant->value) {
-                                $participant->balance += $participant->auxiliary;
-                                $participant->auxiliary = 0;
-                                $participant->save();
-                            }
-
-                            $participant->refresh();
-                            $participant->value = $participant->balance + $participant->auxiliary - $participant->link_income + $participant->link_obligation;
-                            $participant->save();
-
-                            $currentUser->auxiliary -= $share;
-                            $currentUser->value = $currentUser->balance + $currentUser->auxiliary - $currentUser->link_income + $currentUser->link_obligation;
-                            $currentUser->save();
-
-                            // Check if the participant needs to distribute
-                            if ($participant->trxCount >= $participant->trigger) {
-                                Log::info($participant->name . ' needs to distribute');
-                                $distributionsToTrigger[] = $participant;
-                            }
-                        }
-                    });
-                }
-            }
+            // Update existing link
+            DB::table('links')->where([
+                ['sender_id', '=', $senderId],
+                ['receiver_id', '=', $receiverId]
+            ])->update([
+                'amount' => DB::raw('amount + ' . $amount),
+                'rate' => $newRate
+            ]);
+        } else {
+            // Insert new link
+            DB::table('links')->insert([
+                'sender_id' => $senderId,
+                'receiver_id' => $receiverId,
+                'amount' => $amount,
+                'rate' => $feeRate
+            ]);
         }
     }
 
-    private function clearPendingDistributions($receiver): void
+    private function clearPendingDistributions(): void
     {
-        $senders = Transactions::where('receiver_id', $receiver->id)
-            ->select('sender_id')
-            ->distinct()
+        $accounts = Account::whereColumn('trxCount', 'trigger')
             ->get();
 
-        foreach ($senders as $sender) {
-            $account = Account::where('sender_id', $sender->sender_id)
-                ->whereRaw('trxCount >= trigger')
-                ->get();
-
-            $this->triggerDistributions($account, $sender->refresh());
+        foreach ($accounts as $account) {
+            Log::info('distributor ' . $account);
+            $this->Distribute($account);
         }
+    }
+
+    private function Distribute($account): void
+    {
+        Log::info('Distributing for account: ' . $account->id);
+
+        $distributionAmount = $account->auxiliary;
+
+        // Get all participants (senders to the account and the account itself)
+        $links = DB::table('links')->where('receiver_id', $account->id)->get();
+
+        $totalPR = 0;
+        $participants = collect();
+
+        foreach ($links as $link) {
+            $participant = Account::find($link->sender_id);
+            if ($participant && $participant->balance < $participant->value) {
+                $participants->push($participant);
+                $totalPR += $participant->public_rate;
+            }
+        }
+
+        // Also consider the account itself as a potential participant
+        if ($account->balance < $account->value) {
+            $participants->push($account);
+            $totalPR += $account->public_rate;
+        }
+
+        // Track whether any distributions occurred
+        $distributionOccurred = false;
+
+        // Only proceed if totalPR is greater than zero
+        if ($totalPR > 0) {
+            // Calculate and distribute share for each participant
+            foreach ($participants as $participant) {
+                $share = $distributionAmount * ($participant->public_rate / $totalPR);
+                if ($share > 0) {
+                    $distributionOccurred = true;
+                    $share = min($share, $participant->value - $participant->balance);
+                    $this->createDistributionTransaction($account, $participant, $share);
+                }
+            }
+        } else {
+            Log::warning('Total PR is zero, distribution skipped for account: ' . $account->id);
+        }
+
+        // Reset the account's trxCount after distribution
+        $account->trxCount = 0;
+        $account->save();
+    }
+
+    private function createDistributionTransaction($account, $participant, $share)
+    {
+        Log::info('Creating distribution transaction from ' . $account->id . ' to ' . $participant->id);
+
+        // Handle case where the participant is the same as the account
+        if ($participant->id == $account->id) {
+            $participant->balance += $share;
+            $participant->auxiliary -= $share;
+            $participant->save();
+        } else {
+            // Update participant's auxiliary and link obligation
+            $participant->auxiliary += $share;
+            $participant->trxCount += 1;
+            $participant->save();
+
+            $account->auxiliary -= $share;
+            $account->save();
+
+            // Update links
+            $this->updateLink($participant->id, $account->id, -$share, 0); // rate 0 is a special case
+        }
+
+        // Update participant's public rate
+        $participant->public_rate = $this->calculateNewPR($participant);
+        $participant->save();
     }
 }

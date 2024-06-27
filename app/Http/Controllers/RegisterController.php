@@ -6,6 +6,7 @@ use App\Models\Account;
 use App\Models\Transactions;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
@@ -50,9 +51,11 @@ class RegisterController extends Controller
     {
         $account = Account::query();
 
-        $account->update(['balance' => 100, 'link_obligation' => 0, 'link_income' => 0, 'value' => 100, 'public_rate' => 0, 'auxiliary' => 0, 'trigger' => 3, 'trxCount' => 0]);
+        $account->update(['balance' => 1000, 'link_obligation' => 0, 'link_income' => 0, 'value' => 1000, 'public_rate' => 0, 'auxiliary' => 0, 'trigger' => 3, 'trxCount' => 0]);
         $trx = Transactions::query();
         $trx->delete();
+        $links = DB::table('links');
+        $links->delete();
 
         return response()->json(['message' => 'All users have been deleted'], 200);
     }

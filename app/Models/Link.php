@@ -9,6 +9,6 @@ class Link extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['from_account_id', 'to_account_id', 'value'];
+    protected $fillable = ['sender_id', 'receiver_id', 'amount'];
 }
 

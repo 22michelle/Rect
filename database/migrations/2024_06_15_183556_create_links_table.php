@@ -17,7 +17,8 @@ class CreateLinksTable extends Migration
             $table->id();
             $table->unsignedBigInteger('sender_id');
             $table->unsignedBigInteger('receiver_id');
-            $table->decimal('amount', 15, 2);
+            $table->decimal('amount', 15);
+            $table->
             $table->timestamps();
         });
 
