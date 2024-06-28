@@ -97,19 +97,26 @@ class TransactionService
             // Update link rate if it's not 0 -special case from distributions-
             $newRate = 0; //initialization of this variable ??
             if ($feeRate == 0){
-                $newRate = $existingLink->rate;
+                    // Update existing link
+                DB::table('links')->where([
+                    ['sender_id', '=', $senderId],
+                    ['receiver_id', '=', $receiverId]
+                ])->update([
+                    'amount' => DB::raw('amount + ' . $amount),
+                    //without rate update
+                ]);
             } else {
                 $newRate = (($existingLink->amount * $existingLink->rate) + ($amount * $feeRate)) / ($existingLink->amount + $amount);
+                // Update existing link
+                DB::table('links')->where([
+                    ['sender_id', '=', $senderId],
+                    ['receiver_id', '=', $receiverId]
+                ])->update([
+                    'amount' => DB::raw('amount + ' . $amount),
+                    'rate' => $newRate
+                ]);
             }
-            // Update existing link
-            DB::table('links')->where([
-                ['sender_id', '=', $senderId],
-                ['receiver_id', '=', $receiverId]
-            ])->update([
-                'amount' => DB::raw('amount + ' . $amount),
-                'rate' => $newRate
-            ]);
-
+           
             // Check for link deletion
             if ($existingLink->amount <= 0) {
                 DB::table('links')->where([
