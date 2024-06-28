@@ -95,7 +95,9 @@ class TransactionService
 
         if ($existingLink) {
             // Update link rate if it's not 0 -special case from distributions-
-            if ($feeRate > 0){
+            if ($feeRate == 0){
+                $newRate = $existingLink->rate;
+            } else {
                 $newRate = (($existingLink->amount * $existingLink->rate) + ($amount * $feeRate)) / ($existingLink->amount + $amount);
             }
             // Update existing link
