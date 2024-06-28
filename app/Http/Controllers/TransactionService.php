@@ -23,28 +23,42 @@ class TransactionService
                 'is_distributed' => false
             ]);
 
-            // Update links before updating sender and receiver
-            $this->updateLink($senderId, $receiverId, $amount, $feeRate);
+            if ($feeRate == 0 ){ //Transactions with user selected fee 0 are direct transactions not registered in links 
 
-            // Calculate fee
-            $fee = $amount * ($feeRate / 100);
+                //update sender balance      
+                $sender->balance -= ($amount);
+                $sender->value = $this->calculateValue($sender);
+                $sender->save();
 
-            // Update sender's balance and obligations
-            $sender->balance -= ($amount + $fee);
-            $sender->save();
-            $sender->public_rate = $this->calculateNewPR($sender->refresh());
-            $sender->value = $this->calculateValue($sender);
-            $sender->save();
+                //update receiver balance
+                $receiver->balance += $amount;
+                $receiver->value = $this->calculateValue($receiver);
+                $receiver->save();
+            
+            } else {
 
-            // Update receiver's balance, auxiliary, and link income
-            $receiver->balance += $amount;
-            $receiver->auxiliary += $fee;
-            $receiver->trxCount += 1; // Increment receiver's trxCount
-            $receiver->value = $this->calculateValue($receiver);
-            $receiver->save();
-
-            $this->clearPendingDistributions();
-
+                // Update links before updating sender and receiver
+                $this->updateLink($senderId, $receiverId, $amount, $feeRate);
+    
+                // Calculate fee
+                $fee = $amount * ($feeRate / 100);
+    
+                // Update sender's balance and obligations
+                $sender->balance -= ($amount + $fee);
+                $sender->save();
+                $sender->public_rate = $this->calculateNewPR($sender->refresh());
+                $sender->value = $this->calculateValue($sender);
+                $sender->save();
+    
+                // Update receiver's balance, auxiliary, and link income
+                $receiver->balance += $amount;
+                $receiver->auxiliary += $fee;
+                $receiver->trxCount += 1; // Increment receiver's trxCount
+                $receiver->value = $this->calculateValue($receiver);
+                $receiver->save();
+    
+                $this->clearPendingDistributions();
+            }
             return $transaction;
         });
     }
@@ -80,9 +94,10 @@ class TransactionService
         ])->first();
 
         if ($existingLink) {
-            // Update link rate
-            $newRate = (($existingLink->amount * $existingLink->rate) + ($amount * $feeRate)) / ($existingLink->amount + $amount);
-
+            // Update link rate if it's not 0 -special case from distributions-
+            if ($feeRate > 0){
+                $newRate = (($existingLink->amount * $existingLink->rate) + ($amount * $feeRate)) / ($existingLink->amount + $amount);
+            }
             // Update existing link
             DB::table('links')->where([
                 ['sender_id', '=', $senderId],
@@ -188,6 +203,8 @@ class TransactionService
             $account->auxiliary -= $share;
             $account->save();
 
+            $this->updateLink($participant->id, $account->id, -$share, 0); // rate 0 is a special case that doesn't change the link rate
+
             // Check and delete link if amount is zero or negative 
             $existingLink = DB::table('links')
             ->where('sender_id', $participant->id)
@@ -200,10 +217,10 @@ class TransactionService
                 ->where('receiver_id', $account->id)
                 ->delete();
             }
-        }
-
-        // Update participant's public rate
-        $participant->public_rate = $this->calculateNewPR($participant);
-        $participant->save();
+            
+            // Update participant's public rate
+            $participant->public_rate = $this->calculateNewPR($participant);
+            $participant->save();
+        }  
     }
 }
