@@ -123,7 +123,11 @@ class TransactionService
                     ['sender_id', '=', $senderId],
                     ['receiver_id', '=', $receiverId]
                 ])->delete();
-$receiverId->trigger-=1; //trigger keeps track of incoming links
+
+$receiver = Account::find($receiverId);
+$receiver->trigger -= 1; //keep track of incoming links 
+$receiver->save();
+
             }
         } else {
             // Insert new link
@@ -133,7 +137,11 @@ $receiverId->trigger-=1; //trigger keeps track of incoming links
                 'amount' => $amount,
                 'rate' => $feeRate
             ]);
-$receiverId->trigger += 1; //trigger keeps track of incoming links
+
+$receiver = Account::find($receiverId);
+$receiver->trigger += 1; //keep track of incoming links 
+$receiver->save();
+
         }
     }
 
