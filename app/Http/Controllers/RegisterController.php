@@ -34,7 +34,7 @@ class RegisterController extends Controller
             'value' => $request->balance ?? 100, // value is initially equal to balance
             'public_rate' =>  0, // default PR
             'auxiliary' => 0,
-            'trigger' => $request->trigger
+            'trigger' => 0
         ]);
 
         return response()->json(['user' => $user], 201);
