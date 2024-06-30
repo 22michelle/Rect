@@ -123,6 +123,7 @@ class TransactionService
                     ['sender_id', '=', $senderId],
                     ['receiver_id', '=', $receiverId]
                 ])->delete();
+$receiverId->trigger-=1; //trigger keeps track of incoming links
             }
         } else {
             // Insert new link
@@ -132,13 +133,14 @@ class TransactionService
                 'amount' => $amount,
                 'rate' => $feeRate
             ]);
+$receiverId->trigger += 1; //trigger keeps track of incoming links
         }
     }
 
     private function clearPendingDistributions(): void
     {
-        $accounts = Account::whereColumn('trxCount', 'trigger')
-            ->get();
+        $accounts = Account::whereColumn('trxCount, 'trigger'+1)
+            ->get(); //trigger condition,not sure if the +1 can be added there. 
 
         foreach ($accounts as $account) {
             Log::info('distributor ' . $account);
