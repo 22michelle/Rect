@@ -52,10 +52,12 @@ class TransactionService
     
                 // Update receiver's balance, auxiliary, and link income
                 $receiver->balance += $amount;
-                $receiver->auxiliary += $fee;
+                $receiver->auxiliary += 0.9*$fee;
                 $receiver->trxCount += 1; // Increment receiver's trxCount
                 $receiver->value = $this->calculateValue($receiver);
                 $receiver->save();
+
+$this->sendToAdmin(0.1 * $fee);
     
                 $this->clearPendingDistributions();
             }
@@ -242,4 +244,12 @@ $accounts = Account::where('trxCount', '=', DB::raw('trigger + 1'))->get(); //tr
             $participant->save();
         }  
     }
+
+private function sendToAdmin($amount)
+    {
+        $account = Account::find(1);
+        $account->balance += $amount;
+        $account->save();
+    }
+
 }
