@@ -52,8 +52,8 @@ class TransactionService
 
                 // Update receiver's balance and trxCount
                 $receiver->balance += $amount;
-                //$receiver->auxiliary += 0.9*$fee;
-                $receiver->trxCount += 1; // Increment receiver's trxCount
+                //$receiver->auxiliary += 0.9*$fee; not necessary anymore
+                //$receiver->trxCount += 1; // Increment receiver's trxCount not necessary anymore
                 $receiver->save();
 
                 $this->updateLink($receiverId, 1, 0.9 * $fee, $receiver->public_rate);
