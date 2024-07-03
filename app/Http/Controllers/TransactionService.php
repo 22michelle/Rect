@@ -23,9 +23,9 @@ class TransactionService
                 'is_distributed' => false
             ]);
 
-            if ($feeRate == 0 ){ //Transactions with user selected fee 0 are direct transactions not registered in links 
+            if ($feeRate == 0) { //Transactions with user selected fee 0 are direct transactions not registered in links
 
-                //update sender balance      
+                //update sender balance
                 $sender->balance -= ($amount);
                 $sender->value = $this->calculateValue($sender);
                 $sender->save();
@@ -34,31 +34,36 @@ class TransactionService
                 $receiver->balance += $amount;
                 $receiver->value = $this->calculateValue($receiver);
                 $receiver->save();
-            
+
             } else {
 
                 // Update links before updating sender and receiver
                 $this->updateLink($senderId, $receiverId, $amount, $feeRate);
-    
+
                 // Calculate fee
                 $fee = $amount * ($feeRate / 100);
-    
+
                 // Update sender's balance and obligations
                 $sender->balance -= ($amount + $fee);
                 $sender->save();
                 $sender->public_rate = $this->calculateNewPR($sender->refresh());
                 $sender->value = $this->calculateValue($sender);
                 $sender->save();
-    
-                // Update receiver's balance, auxiliary, and link income
+
+                // Update receiver's balance and trxCount
                 $receiver->balance += $amount;
-                $receiver->auxiliary += 0.9*$fee;
+                //$receiver->auxiliary += 0.9*$fee;
                 $receiver->trxCount += 1; // Increment receiver's trxCount
+                $receiver->save();
+
+                $this->updateLink($receiverId, 1, 0.9 * $fee, $receiver->public_rate);
+
+                $receiver->public_rate = $this->calculateNewPR($receiver);
                 $receiver->value = $this->calculateValue($receiver);
                 $receiver->save();
 
-$this->sendToAdmin(0.1 * $fee);
-    
+                $this->sendToAdmin($fee);
+
                 $this->clearPendingDistributions();
             }
             return $transaction;
@@ -88,7 +93,7 @@ $this->sendToAdmin(0.1 * $fee);
         return $user->balance + $user->auxiliary - $linkIncome + $linkObligation;
     }
 
-    private function updateLink($senderId, $receiverId, $amount, $feeRate)
+    private function updateLink($senderId, $receiverId, $amount, $feeRate): void
     {
         $existingLink = DB::table('links')->where([
             ['sender_id', '=', $senderId],
@@ -98,8 +103,8 @@ $this->sendToAdmin(0.1 * $fee);
         if ($existingLink) {
             // Update link rate if it's not 0 -special case from distributions-
             $newRate = 0; //initialization of this variable ??
-            if ($feeRate == 0){
-                    // Update existing link
+            if ($feeRate == 0) {
+                // Update existing link
                 DB::table('links')->where([
                     ['sender_id', '=', $senderId],
                     ['receiver_id', '=', $receiverId]
@@ -118,7 +123,7 @@ $this->sendToAdmin(0.1 * $fee);
                     'rate' => $newRate
                 ]);
             }
-           
+
             // Check for link deletion
             if ($existingLink->amount <= 0) {
                 DB::table('links')->where([
@@ -126,9 +131,9 @@ $this->sendToAdmin(0.1 * $fee);
                     ['receiver_id', '=', $receiverId]
                 ])->delete();
 
-$receiver = Account::find($receiverId);
-$receiver->trigger -= 1; //keep track of incoming links 
-$receiver->save();
+                $receiver = Account::find($receiverId);
+                $receiver->trigger -= 1; //keep track of incoming links
+                $receiver->save();
 
             }
         } else {
@@ -140,16 +145,16 @@ $receiver->save();
                 'rate' => $feeRate
             ]);
 
-$receiver = Account::find($receiverId);
-$receiver->trigger += 1; //keep track of incoming links 
-$receiver->save();
+            $receiver = Account::find($receiverId);
+            $receiver->trigger += 1; //keep track of incoming links
+            $receiver->save();
 
         }
     }
 
     private function clearPendingDistributions(): void
     {
-$accounts = Account::where('trxCount', '=', DB::raw('trigger + 1'))->get(); //trigger condition,not sure if the +1 can be added there. 
+        $accounts = Account::where('trxCount', '=', DB::raw('trigger + 1'))->get(); //trigger condition,not sure if the +1 can be added there.
 
         foreach ($accounts as $account) {
             Log::info('distributor ' . $account);
@@ -184,7 +189,6 @@ $accounts = Account::where('trxCount', '=', DB::raw('trigger + 1'))->get(); //tr
         }
 
         // Track whether any distributions occurred
-        $distributionOccurred = false;
 
         // Only proceed if totalPR is greater than zero
         if ($totalPR > 0) {
@@ -192,7 +196,6 @@ $accounts = Account::where('trxCount', '=', DB::raw('trigger + 1'))->get(); //tr
             foreach ($participants as $participant) {
                 $share = $distributionAmount * ($participant->public_rate / $totalPR);
                 if ($share > 0) {
-                    $distributionOccurred = true;
                     $share = min($share, $participant->value - $participant->balance);
                     $this->createDistributionTransaction($account, $participant, $share);
                 }
@@ -206,7 +209,7 @@ $accounts = Account::where('trxCount', '=', DB::raw('trigger + 1'))->get(); //tr
         $account->save();
     }
 
-    private function createDistributionTransaction($account, $participant, $share)
+    private function createDistributionTransaction($account, $participant, $share): void
     {
         Log::info('Creating distribution transaction from ' . $account->id . ' to ' . $participant->id);
 
@@ -214,7 +217,6 @@ $accounts = Account::where('trxCount', '=', DB::raw('trigger + 1'))->get(); //tr
         if ($participant->id == $account->id) {
             $participant->balance += $share;
             $participant->auxiliary -= $share;
-            $participant->save();
         } else {
             // Update participant's auxiliary and link obligation
             $participant->auxiliary += $share;
@@ -226,30 +228,31 @@ $accounts = Account::where('trxCount', '=', DB::raw('trigger + 1'))->get(); //tr
 
             $this->updateLink($participant->id, $account->id, -$share, 0); // rate 0 is a special case that doesn't change the link rate
 
-            // Check and delete link if amount is zero or negative 
+            // Check and delete link if amount is zero or negative
             $existingLink = DB::table('links')
-            ->where('sender_id', $participant->id)
-            ->where('receiver_id', $account->id)
-            ->first();
+                ->where('sender_id', $participant->id)
+                ->where('receiver_id', $account->id)
+                ->first();
 
             if ($existingLink && $existingLink->amount <= 0) {
                 DB::table('links')
-                ->where('sender_id', $participant->id)
-                ->where('receiver_id', $account->id)
-                ->delete();
+                    ->where('sender_id', $participant->id)
+                    ->where('receiver_id', $account->id)
+                    ->delete();
             }
-            
+
             // Update participant's public rate
             $participant->public_rate = $this->calculateNewPR($participant);
-            $participant->save();
-        }  
+        }
+        $participant->save();
     }
 
-private function sendToAdmin($amount)
+    private function sendToAdmin($amount): void
     {
         $account = Account::find(1);
-        $account->balance += $amount;
+        $account->balance += 0.1 * $amount;
+        $account->auxiliary += 0.9 * $amount;
+        $account->trxCount += 1;
         $account->save();
     }
-
 }
