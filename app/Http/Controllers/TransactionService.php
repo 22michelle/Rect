@@ -178,10 +178,7 @@ class TransactionService
 
         foreach ($links as $link) {
             $participant = Account::find($link->sender_id);
-            if ($participant && $participant->balance < $participant->value) {
-                $participants->push($participant);
                 $totalPR += $participant->public_rate;
-            }
         }
 
         // Also consider the account itself as a potential participant
