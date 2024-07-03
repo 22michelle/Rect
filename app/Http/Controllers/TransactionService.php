@@ -50,15 +50,20 @@ class TransactionService
                 $sender->value = $this->calculateValue($sender);
                 $sender->save();
     
-                // Update receiver's balance, auxiliary, and link income
+                // Update receiver's balance and trxCount
                 $receiver->balance += $amount;
-                $receiver->auxiliary += 0.9*$fee;
+                //$receiver->auxiliary += 0.9*$fee;
                 $receiver->trxCount += 1; // Increment receiver's trxCount
+                $receiver->save();
+
+                $this->updateLink($receiverId, 1, 0.9*fee, $receiver->public_rate);
+                
+                $receiver->public_rate = $this->calculateNewPR($sreceiver->refresh());
                 $receiver->value = $this->calculateValue($receiver);
                 $receiver->save();
 
-$this->sendToAdmin(0.1 * $fee);
-    
+                $this->sendToAdmin($fee);
+                
                 $this->clearPendingDistributions();
             }
             return $transaction;
@@ -126,9 +131,9 @@ $this->sendToAdmin(0.1 * $fee);
                     ['receiver_id', '=', $receiverId]
                 ])->delete();
 
-$receiver = Account::find($receiverId);
-$receiver->trigger -= 1; //keep track of incoming links 
-$receiver->save();
+                $receiver = Account::find($receiverId);
+                $receiver->trigger -= 1; //keep track of incoming links 
+                $receiver->save();
 
             }
         } else {
@@ -140,9 +145,9 @@ $receiver->save();
                 'rate' => $feeRate
             ]);
 
-$receiver = Account::find($receiverId);
-$receiver->trigger += 1; //keep track of incoming links 
-$receiver->save();
+            $receiver = Account::find($receiverId);
+            $receiver->trigger += 1; //keep track of incoming links 
+            $receiver->save();
 
         }
     }
@@ -245,11 +250,12 @@ $accounts = Account::where('trxCount', '=', DB::raw('trigger + 1'))->get(); //tr
         }  
     }
 
-private function sendToAdmin($amount)
+    private function sendToAdmin($amount)
     {
         $account = Account::find(1);
-        $account->balance += $amount;
+        $account->balance += 0.1*$amount;
+        $account->auxiliary += 0.9*$amount;
+        $account->trxCount += 1;
         $account->save();
     }
-
 }
