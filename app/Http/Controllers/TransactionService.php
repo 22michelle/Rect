@@ -52,8 +52,8 @@ class TransactionService
 
                 // Update receiver's balance and trxCount
                 $receiver->balance += $amount;
-                //$receiver->auxiliary += 0.9*$fee; not necessary anymore
-                //$receiver->trxCount += 1; // Increment receiver's trxCount not necessary anymore
+                //$receiver->auxiliary += 0.9*$fee;
+                //$receiver->trxCount += 1; // Increment receiver's trxCount
                 $receiver->save();
 
                 $this->updateLink($receiverId, 1, 0.9 * $fee, $receiver->public_rate);
@@ -154,7 +154,9 @@ class TransactionService
 
     private function clearPendingDistributions(): void
     {
-        $accounts = Account::where('trxCount', '=', DB::raw('trigger + 1'))->get(); //trigger condition,not sure if the +1 can be added there.
+        $accounts = Account::select('*')
+            ->where('`trxCount` = `trigger` + 1')
+                    ->get(); //trigger condition,not sure if the +1 can be added there.
 
         foreach ($accounts as $account) {
             Log::info('distributor ' . $account);
