@@ -56,7 +56,7 @@ class TransactionService
                 //$receiver->trxCount += 1; // Increment receiver's trxCount
                 $receiver->save();
 
-                $this->updateLink($receiverId, 1, 0.9 * $fee, $receiver->public_rate);
+                $this->updateLink($receiverId, 1, ($fee * 1), $receiver->public_rate);
 
                 $receiver->public_rate = $this->calculateNewPR($receiver);
                 $receiver->value = $this->calculateValue($receiver);
@@ -79,7 +79,7 @@ class TransactionService
         Log::info('Amount * Fee ' . $sumProd);
 
         if ($totalAmount == 0) {
-            return 0;
+            return $user->public_rate;
         } else {
             Log::info('PR ' . $sumProd / $totalAmount);
             return $sumProd / $totalAmount;
@@ -155,11 +155,11 @@ class TransactionService
     private function clearPendingDistributions(): void
     {
         $accounts = Account::select('*')
-            ->where('`trxCount` = `trigger` + 1')
-                    ->get(); //trigger condition,not sure if the +1 can be added there.
+            ->whereRaw('`trxCount` >= `trigger` + 1')
+            ->get(); // trigger condition
 
         foreach ($accounts as $account) {
-            Log::info('distributor ' . $account);
+            Log::info('distributor ' . $account->name);
             $this->Distribute($account);
         }
     }
@@ -178,7 +178,9 @@ class TransactionService
 
         foreach ($links as $link) {
             $participant = Account::find($link->sender_id);
-                $totalPR += $participant->public_rate;
+            $totalPR += $participant->public_rate;
+            Log::info($participant->public_rate);
+            $participants->push($participant);
         }
 
         // Also consider the account itself as a potential participant
@@ -187,15 +189,28 @@ class TransactionService
             $totalPR += $account->public_rate;
         }
 
+        if ($totalPR == 0) {
+            $totalPR = 10;
+        }
+
+        Log::info('Total PR '.$totalPR);
+
         // Track whether any distributions occurred
 
         // Only proceed if totalPR is greater than zero
         if ($totalPR > 0) {
             // Calculate and distribute share for each participant
             foreach ($participants as $participant) {
-                $share = $distributionAmount * ($participant->public_rate / $totalPR);
+                $pr = 10;
+                if ($participant->public_rate > 0) {
+                    $pr = $participant->public_rate;
+                }
+
+                $share = $distributionAmount * ($pr / $totalPR);
+                Log::info('Share for ' . $participant->name . ': ' . $share);
                 if ($share > 0) {
-                    $share = min($share, $participant->value - $participant->balance);
+                    /*$share = $share;*/
+                    Log::info($share . ' goes to ' . $participant->name);
                     $this->createDistributionTransaction($account, $participant, $share);
                 }
             }
@@ -227,19 +242,6 @@ class TransactionService
 
             $this->updateLink($participant->id, $account->id, -$share, 0); // rate 0 is a special case that doesn't change the link rate
 
-            // Check and delete link if amount is zero or negative
-            $existingLink = DB::table('links')
-                ->where('sender_id', $participant->id)
-                ->where('receiver_id', $account->id)
-                ->first();
-
-            if ($existingLink && $existingLink->amount <= 0) {
-                DB::table('links')
-                    ->where('sender_id', $participant->id)
-                    ->where('receiver_id', $account->id)
-                    ->delete();
-            }
-
             // Update participant's public rate
             $participant->public_rate = $this->calculateNewPR($participant);
         }
@@ -249,9 +251,10 @@ class TransactionService
     private function sendToAdmin($amount): void
     {
         $account = Account::find(1);
-        $account->balance += 0.1 * $amount;
-        $account->auxiliary += 0.9 * $amount;
+        $account->balance += 0 * $amount;
+        $account->auxiliary += 1 * $amount;
         $account->trxCount += 1;
+        $account->value = $this->calculateValue($account);
         $account->save();
     }
 }
